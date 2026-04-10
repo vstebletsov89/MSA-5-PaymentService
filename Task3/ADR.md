@@ -59,7 +59,7 @@
 Client
 -> Payment Service
 -> FraudCheck Service
--> Merchant Integration
+-> Payment Gateway Adapter
 -> Notification Service
 
 
@@ -91,7 +91,7 @@ Client
 -> Payment Orchestrator
 -> Payment Service
 -> FraudCheck Service
--> Merchant Integration
+-> Payment Gateway Adapter
 -> Notification Service
 
 
