@@ -60,7 +60,6 @@ Client
 -> Payment Service
 -> FraudCheck Service
 -> Merchant Integration
--> Refund flow
 -> Notification Service
 
 
@@ -93,7 +92,6 @@ Client
 -> Payment Service
 -> FraudCheck Service
 -> Merchant Integration
--> Refund flow
 -> Notification Service
 
 
