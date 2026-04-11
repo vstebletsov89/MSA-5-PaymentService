@@ -1,0 +1,25 @@
+spring:
+  application:
+    name: payment-orchestrator
+
+zeebe:
+  client:
+    broker:
+      gateway-address: ${ZEEBE_ADDRESS:localhost:26500}
+      grpc-address: http://${ZEEBE_ADDRESS:localhost:26500}
+      rest-address: http://${ZEEBE_REST_ADDRESS:localhost:8088}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    com.orchestrpay: DEBUG
+    io.camunda: DEBUG

@@ -1,0 +1,239 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+        xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+        xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+        xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+        xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+        id="Definitions_OrchestrPay"
+        targetNamespace="http://orchestrpay.com/bpmn"
+        exporter="Camunda Modeler"
+        exporterVersion="5.45.0">
+
+    <bpmn:process id="Process_Payment" name="OrchestrPay Payment Process" isExecutable="true">
+
+        <!-- START -->
+        <bpmn:startEvent id="Start" name="Платёж инициирован">
+            <bpmn:outgoing>F_start_create</bpmn:outgoing>
+        </bpmn:startEvent>
+
+        <!-- 1. Создать платёж -->
+        <bpmn:serviceTask id="Task_CreatePayment" name="Создать платёж">
+            <bpmn:extensionElements>
+                <zeebe:taskDefinition type="create-payment" />
+            </bpmn:extensionElements>
+            <bpmn:incoming>F_start_create</bpmn:incoming>
+            <bpmn:outgoing>F_create_reserve</bpmn:outgoing>
+        </bpmn:serviceTask>
+
+        <!-- 2. Списать / зарезервировать средства -->
+        <bpmn:serviceTask id="Task_ReserveFunds" name="Списать средства">
+            <bpmn:extensionElements>
+                <zeebe:taskDefinition type="reserve-funds" />
+            </bpmn:extensionElements>
+            <bpmn:incoming>F_create_reserve</bpmn:incoming>
+            <bpmn:outgoing>F_reserve_fraud</bpmn:outgoing>
+        </bpmn:serviceTask>
+
+        <!-- 3. Antifraud-проверка -->
+        <bpmn:serviceTask id="Task_FraudCheck" name="Проверка на антифрод">
+            <bpmn:extensionElements>
+                <zeebe:taskDefinition type="fraud-check" />
+            </bpmn:extensionElements>
+            <bpmn:incoming>F_reserve_fraud</bpmn:incoming>
+            <bpmn:outgoing>F_fraud_gw</bpmn:outgoing>
+        </bpmn:serviceTask>
+
+        <!-- GW: Результат антифрод -->
+        <bpmn:exclusiveGateway id="GW_FraudDecision" name="Результат проверки">
+            <bpmn:incoming>F_fraud_gw</bpmn:incoming>
+            <bpmn:outgoing>F_fraud_ok</bpmn:outgoing>
+            <bpmn:outgoing>F_fraud_reject</bpmn:outgoing>
+            <bpmn:outgoing>F_fraud_manual</bpmn:outgoing>
+        </bpmn:exclusiveGateway>
+
+        <!-- Ожидание ручного подтверждения -->
+        <bpmn:receiveTask
+                id="Task_ManualReview"
+                name="Ожидание ручного подтверждения"
+                messageRef="Message_ManualReviewCompleted">
+            <bpmn:extensionElements>
+                <zeebe:properties>
+                    <zeebe:property name="description" value="Waiting for manual fraud review" />
+                </zeebe:properties>
+            </bpmn:extensionElements>
+            <bpmn:incoming>F_fraud_manual</bpmn:incoming>
+            <bpmn:outgoing>F_manual_gw</bpmn:outgoing>
+        </bpmn:receiveTask>
+
+        <!-- Boundary timer: cut-off 20 мин -->
+        <bpmn:boundaryEvent
+                id="Boundary_CutOff"
+                name="Cut-off 20 мин"
+                attachedToRef="Task_ManualReview"
+                cancelActivity="true">
+            <bpmn:outgoing>F_cutoff_merge</bpmn:outgoing>
+            <bpmn:timerEventDefinition>
+                <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT20M</bpmn:timeDuration>
+            </bpmn:timerEventDefinition>
+        </bpmn:boundaryEvent>
+
+        <!-- GW: Решение оператора -->
+        <bpmn:exclusiveGateway id="GW_ManualDecision" name="Решение оператора">
+            <bpmn:incoming>F_manual_gw</bpmn:incoming>
+            <bpmn:outgoing>F_manual_ok</bpmn:outgoing>
+            <bpmn:outgoing>F_manual_reject</bpmn:outgoing>
+        </bpmn:exclusiveGateway>
+
+        <!-- Merge approved -->
+        <bpmn:exclusiveGateway id="GW_ApprovedMerge">
+            <bpmn:incoming>F_fraud_ok</bpmn:incoming>
+            <bpmn:incoming>F_manual_ok</bpmn:incoming>
+            <bpmn:incoming>F_cutoff_merge</bpmn:incoming>
+            <bpmn:outgoing>F_merge_transfer</bpmn:outgoing>
+        </bpmn:exclusiveGateway>
+
+        <!-- 4. Перевод контрагенту -->
+        <bpmn:serviceTask id="Task_TransferMerchant" name="Перевод контрагенту">
+            <bpmn:extensionElements>
+                <zeebe:taskDefinition type="transfer-to-merchant" />
+            </bpmn:extensionElements>
+            <bpmn:incoming>F_merge_transfer</bpmn:incoming>
+            <bpmn:outgoing>F_transfer_pivot</bpmn:outgoing>
+        </bpmn:serviceTask>
+
+        <!-- GW: Pivot -->
+        <bpmn:exclusiveGateway id="GW_Pivot" name="Ошибка после pivot">
+            <bpmn:incoming>F_transfer_pivot</bpmn:incoming>
+            <bpmn:outgoing>F_pivot_success</bpmn:outgoing>
+            <bpmn:outgoing>F_pivot_compensate</bpmn:outgoing>
+        </bpmn:exclusiveGateway>
+
+        <!-- Success path -->
+        <bpmn:serviceTask id="Task_NotifySuccess" name="Уведомление об успешной оплате">
+            <bpmn:extensionElements>
+                <zeebe:taskDefinition type="notify-success" />
+            </bpmn:extensionElements>
+            <bpmn:incoming>F_pivot_success</bpmn:incoming>
+            <bpmn:outgoing>F_notify_end_ok</bpmn:outgoing>
+        </bpmn:serviceTask>
+
+        <bpmn:endEvent id="End_Success" name="Платёж завершён">
+            <bpmn:incoming>F_notify_end_ok</bpmn:incoming>
+        </bpmn:endEvent>
+
+        <!-- Compensation path -->
+        <bpmn:serviceTask id="Task_ReverseMerchant" name="Отмена перевода контрагенту">
+            <bpmn:extensionElements>
+                <zeebe:taskDefinition type="reverse-merchant-transfer" />
+            </bpmn:extensionElements>
+            <bpmn:incoming>F_pivot_compensate</bpmn:incoming>
+            <bpmn:outgoing>F_reverse_refund</bpmn:outgoing>
+        </bpmn:serviceTask>
+
+        <bpmn:serviceTask id="Task_RefundAfterPivot" name="Возврат средств клиенту">
+            <bpmn:extensionElements>
+                <zeebe:taskDefinition type="refund-customer" />
+            </bpmn:extensionElements>
+            <bpmn:incoming>F_reverse_refund</bpmn:incoming>
+            <bpmn:outgoing>F_refund_notify_comp</bpmn:outgoing>
+        </bpmn:serviceTask>
+
+        <bpmn:serviceTask id="Task_NotifyRejectComp" name="Уведомление об отклонении платежа">
+            <bpmn:extensionElements>
+                <zeebe:taskDefinition type="notify-rejection" />
+            </bpmn:extensionElements>
+            <bpmn:incoming>F_refund_notify_comp</bpmn:incoming>
+            <bpmn:outgoing>F_comp_end</bpmn:outgoing>
+        </bpmn:serviceTask>
+
+        <bpmn:endEvent id="End_Compensated" name="Платёж отклонен (компенсация)">
+            <bpmn:incoming>F_comp_end</bpmn:incoming>
+        </bpmn:endEvent>
+
+        <!-- Reject path -->
+        <bpmn:exclusiveGateway id="GW_RejectMerge">
+            <bpmn:incoming>F_fraud_reject</bpmn:incoming>
+            <bpmn:incoming>F_manual_reject</bpmn:incoming>
+            <bpmn:outgoing>F_reject_refund</bpmn:outgoing>
+        </bpmn:exclusiveGateway>
+
+        <bpmn:serviceTask id="Task_RefundReject" name="Возврат средств клиенту">
+            <bpmn:extensionElements>
+                <zeebe:taskDefinition type="refund-customer" />
+            </bpmn:extensionElements>
+            <bpmn:incoming>F_reject_refund</bpmn:incoming>
+            <bpmn:outgoing>F_refund_notify_rej</bpmn:outgoing>
+        </bpmn:serviceTask>
+
+        <bpmn:serviceTask id="Task_NotifyReject" name="Уведомление об отклонении платежа">
+            <bpmn:extensionElements>
+                <zeebe:taskDefinition type="notify-rejection" />
+            </bpmn:extensionElements>
+            <bpmn:incoming>F_refund_notify_rej</bpmn:incoming>
+            <bpmn:outgoing>F_notify_end_rej</bpmn:outgoing>
+        </bpmn:serviceTask>
+
+        <bpmn:endEvent id="End_Reject" name="Платёж отклонен">
+            <bpmn:incoming>F_notify_end_rej</bpmn:incoming>
+        </bpmn:endEvent>
+
+        <!-- Sequence flows -->
+        <bpmn:sequenceFlow id="F_start_create" sourceRef="Start" targetRef="Task_CreatePayment" />
+        <bpmn:sequenceFlow id="F_create_reserve" sourceRef="Task_CreatePayment" targetRef="Task_ReserveFunds" />
+        <bpmn:sequenceFlow id="F_reserve_fraud" sourceRef="Task_ReserveFunds" targetRef="Task_FraudCheck" />
+        <bpmn:sequenceFlow id="F_fraud_gw" sourceRef="Task_FraudCheck" targetRef="GW_FraudDecision" />
+
+        <bpmn:sequenceFlow id="F_fraud_ok" name="Пройдена" sourceRef="GW_FraudDecision" targetRef="GW_ApprovedMerge">
+            <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= fraudResult = "APPROVED"</bpmn:conditionExpression>
+        </bpmn:sequenceFlow>
+
+        <bpmn:sequenceFlow id="F_fraud_reject" name="Не пройдена" sourceRef="GW_FraudDecision" targetRef="GW_RejectMerge">
+            <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= fraudResult = "REJECTED"</bpmn:conditionExpression>
+        </bpmn:sequenceFlow>
+
+        <bpmn:sequenceFlow id="F_fraud_manual" name="Требуется ручное подтверждение" sourceRef="GW_FraudDecision" targetRef="Task_ManualReview">
+            <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= fraudResult = "MANUAL_REVIEW"</bpmn:conditionExpression>
+        </bpmn:sequenceFlow>
+
+        <bpmn:sequenceFlow id="F_manual_gw" sourceRef="Task_ManualReview" targetRef="GW_ManualDecision" />
+        <bpmn:sequenceFlow id="F_cutoff_merge" name="Истечение срока" sourceRef="Boundary_CutOff" targetRef="GW_ApprovedMerge" />
+
+        <bpmn:sequenceFlow id="F_manual_ok" name="Ручное подтверждение" sourceRef="GW_ManualDecision" targetRef="GW_ApprovedMerge">
+            <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= manualDecision = "APPROVED"</bpmn:conditionExpression>
+        </bpmn:sequenceFlow>
+
+        <bpmn:sequenceFlow id="F_manual_reject" name="Ручной отказ" sourceRef="GW_ManualDecision" targetRef="GW_RejectMerge">
+            <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= manualDecision = "REJECTED"</bpmn:conditionExpression>
+        </bpmn:sequenceFlow>
+
+        <bpmn:sequenceFlow id="F_merge_transfer" sourceRef="GW_ApprovedMerge" targetRef="Task_TransferMerchant" />
+        <bpmn:sequenceFlow id="F_transfer_pivot" sourceRef="Task_TransferMerchant" targetRef="GW_Pivot" />
+
+        <bpmn:sequenceFlow id="F_pivot_success" name="Успешно" sourceRef="GW_Pivot" targetRef="Task_NotifySuccess">
+            <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= transferSuccess = true</bpmn:conditionExpression>
+        </bpmn:sequenceFlow>
+
+        <bpmn:sequenceFlow id="F_pivot_compensate" name="Ошибка" sourceRef="GW_Pivot" targetRef="Task_ReverseMerchant">
+            <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= transferSuccess = false</bpmn:conditionExpression>
+        </bpmn:sequenceFlow>
+
+        <bpmn:sequenceFlow id="F_notify_end_ok" sourceRef="Task_NotifySuccess" targetRef="End_Success" />
+        <bpmn:sequenceFlow id="F_reverse_refund" sourceRef="Task_ReverseMerchant" targetRef="Task_RefundAfterPivot" />
+        <bpmn:sequenceFlow id="F_refund_notify_comp" sourceRef="Task_RefundAfterPivot" targetRef="Task_NotifyRejectComp" />
+        <bpmn:sequenceFlow id="F_comp_end" sourceRef="Task_NotifyRejectComp" targetRef="End_Compensated" />
+        <bpmn:sequenceFlow id="F_reject_refund" sourceRef="GW_RejectMerge" targetRef="Task_RefundReject" />
+        <bpmn:sequenceFlow id="F_refund_notify_rej" sourceRef="Task_RefundReject" targetRef="Task_NotifyReject" />
+        <bpmn:sequenceFlow id="F_notify_end_rej" sourceRef="Task_NotifyReject" targetRef="End_Reject" />
+
+    </bpmn:process>
+
+    <!-- Message definition -->
+    <bpmn:message id="Message_ManualReviewCompleted" name="ManualReviewCompleted">
+        <bpmn:extensionElements>
+            <zeebe:subscription correlationKey="= paymentId" />
+        </bpmn:extensionElements>
+    </bpmn:message>
+
+</bpmn:definitions>
