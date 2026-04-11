@@ -5,9 +5,10 @@ spring:
 zeebe:
   client:
     broker:
-      gateway-address: ${ZEEBE_ADDRESS:localhost:26500}
-      grpc-address: http://${ZEEBE_ADDRESS:localhost:26500}
-      rest-address: http://${ZEEBE_REST_ADDRESS:localhost:8088}
+      grpc-address: http://${ZEEBE_ADDRESS:zeebe:26500}
+      rest-address: http://${ZEEBE_REST_ADDRESS:zeebe:8080}
+    security:
+      plaintext: true
 
 management:
   endpoints:
@@ -23,3 +24,4 @@ logging:
   level:
     com.orchestrpay: DEBUG
     io.camunda: DEBUG
+    io.camunda.zeebe: DEBUG
