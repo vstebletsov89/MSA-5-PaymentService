@@ -150,3 +150,204 @@ MVP платёжного процесса уже развёрнут и вклю�
 Диаграмма должна быть представлена в виде простой картинки в формате PNG или JPG.
 
 Получившийся артефакт загрузите в репозиторий в директорию `Task4.1`.
+
+## Задание 4.2. Реализуем процесс Camunda
+
+Теперь, когда у вас готова BPMN-диаграмма, её нужно ещё реализовать в сервисе. Создайте минимальный прототип, который как раз и продемонстрирует работу платёжного процесса с использованием BPMN-движка Camunda.
+
+## Что нужно сделать:
+
+- Реализуйте сервис на любом языке программирования (Java, JavaScript, Python, C#) с интеграцией Camunda.
+- Используйте BPMN-процесс из задания 4.1 как основу для реализации.
+- Используйте docker-compose для запуска стека Camunda и добавьте в него свой сервис.
+
+## Для автоматизации процесса деплоя используйте образ, который нужно собрать из Dockerfile:
+
+```dockerfile
+FROM camunda/zeebe:8.5.22
+
+USER root
+
+RUN apt-get update && \
+apt-get install -y curl netcat-openbsd && \
+curl -L -o /usr/local/bin/zbctl https://github.com/camunda/zeebe/releases/download/8.5.22/zbctl && \
+chmod +x /usr/local/bin/zbctl && \
+apt-get remove -y curl && \
+apt-get autoremove -y && \
+apt-get clean
+
+ENTRYPOINT ["sh", "-c"]
+```
+
+## Файла docker-compose.yml, чтобы развернуть Camunda:
+```yaml
+services:
+
+  zeebe: # https://docs.camunda.io/docs/self-managed/platform-deployment/docker/#zeebe
+    image: camunda/zeebe:${CAMUNDA_PLATFORM_VERSION}
+    container_name: zeebe
+    ports:
+      - "26500:26500"
+      - "9600:9600"
+      - "8088:8080"
+    environment: # https://docs.camunda.io/docs/self-managed/zeebe-deployment/configuration/environment-variables/
+      - ZEEBE_BROKER_EXPORTERS_ELASTICSEARCH_CLASSNAME=io.camunda.zeebe.exporter.ElasticsearchExporter
+      - ZEEBE_BROKER_EXPORTERS_ELASTICSEARCH_ARGS_URL=http://elasticsearch:9200
+      # default is 1000, see here: https://github.com/camunda/zeebe/blob/main/exporters/elasticsearch-exporter/src/main/java/io/camunda/zeebe/exporter/ElasticsearchExporterConfiguration.java#L259
+      - ZEEBE_BROKER_EXPORTERS_ELASTICSEARCH_ARGS_BULK_SIZE=1
+      # allow running with low disk space
+      - ZEEBE_BROKER_DATA_DISKUSAGECOMMANDWATERMARK=0.998
+      - ZEEBE_BROKER_DATA_DISKUSAGEREPLICATIONWATERMARK=0.999
+      - "JAVA_TOOL_OPTIONS=-Xms512m -Xmx512m"
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "timeout 10s bash -c ':> /dev/tcp/127.0.0.1/9600' || exit 1" ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - zeebe:/usr/local/zeebe/data
+    networks:
+      - camunda-platform
+    depends_on:
+      - elasticsearch
+
+  operate: # https://docs.camunda.io/docs/self-managed/platform-deployment/docker/#operate
+    image: camunda/operate:${CAMUNDA_OPERATE_VERSION}
+    container_name: operate
+    ports:
+      - "8081:8080"
+    environment: # https://docs.camunda.io/docs/self-managed/operate-deployment/configuration/
+      - CAMUNDA_OPERATE_ZEEBE_GATEWAYADDRESS=zeebe:26500
+      - CAMUNDA_OPERATE_ELASTICSEARCH_URL=http://elasticsearch:9200
+      - CAMUNDA_OPERATE_ZEEBEELASTICSEARCH_URL=http://elasticsearch:9200
+      - CAMUNDA_OPERATE_CSRFPREVENTIONENABLED=false
+      - management.endpoints.web.exposure.include=health
+      - management.endpoint.health.probes.enabled=true
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -O - -q 'http://localhost:8080/actuator/health/readiness'" ]
+      interval: 30s
+      timeout: 1s
+      retries: 5
+      start_period: 30s
+    networks:
+      - camunda-platform
+    depends_on:
+      - zeebe
+      - elasticsearch
+
+  tasklist: # https://docs.camunda.io/docs/self-managed/platform-deployment/docker/#tasklist
+    image: camunda/tasklist:${CAMUNDA_TASKLIST_VERSION}
+    container_name: tasklist
+    ports:
+      - "8082:8080"
+    environment: # https://docs.camunda.io/docs/self-managed/tasklist-deployment/configuration/
+      - CAMUNDA_TASKLIST_ZEEBE_GATEWAYADDRESS=zeebe:26500
+      - CAMUNDA_TASKLIST_ZEEBE_RESTADDRESS=http://zeebe:8080
+      - CAMUNDA_TASKLIST_ELASTICSEARCH_URL=http://elasticsearch:9200
+      - CAMUNDA_TASKLIST_ZEEBEELASTICSEARCH_URL=http://elasticsearch:9200
+      - CAMUNDA_TASKLIST_CSRFPREVENTIONENABLED=false
+      - management.endpoints.web.exposure.include=health
+      - management.endpoint.health.probes.enabled=true
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -O - -q 'http://localhost:8080/actuator/health/readiness'" ]
+      interval: 30s
+      timeout: 1s
+      retries: 5
+      start_period: 30s
+    networks:
+      - camunda-platform
+    depends_on:
+      - zeebe
+      - elasticsearch
+
+  elasticsearch: # https://hub.docker.com/_/elasticsearch
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION}
+    container_name: elasticsearch
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      - bootstrap.memory_lock=true
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      # allow running with low disk space
+      - cluster.routing.allocation.disk.threshold_enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:9200/_cat/health | grep -q green" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    volumes:
+      - elastic:/usr/share/elasticsearch/data
+    networks:
+      - camunda-platform
+
+  deploy-process:
+    build:
+      context: ./deploy-process
+    volumes:
+      - ./process.bpmn:/process.bpmn
+    depends_on:
+      zeebe:
+        condition: service_healthy
+    networks:
+      - camunda-platform
+    command: >
+      "
+      echo '⏳ Waiting for Zeebe...';
+      until nc -z zeebe 26500; do sleep 5; done;
+      echo '🚀 Deploying BPMN process...';
+      zbctl deploy /process.bpmn --host zeebe --port 26500 --insecure;
+      echo '✅ Process deployed!';
+      sleep 30;
+      "
+
+  новый-сервис:
+    build: ./новый_сервис
+    ports:
+      - "3000:3000"
+    environment:
+      - ZEEBE_ADDRESS=zeebe:26500
+    networks:
+      - camunda-platform
+    depends_on:
+      zeebe:
+        condition: service_started
+
+volumes:
+  zeebe:
+  elastic:
+
+networks:
+  camunda-platform:
+
+```
+
+- CAMUNDA_PLATFORM_VERSION=8.5.22
+- CAMUNDA_OPERATE_VERSION=8.5.22
+- CAMUNDA_TASKLIST_VERSION=8.5.24
+- ELASTIC_VERSION=8.14.3
+
+Логин и пароль для интерфейса — `demo/demo`.
+
+## Реализуйте обработчики для ключевых шагов процесса. Например:
+
+- обработка платежа;
+- антифрод-проверка (с эмуляцией всех трёх сценариев: разрешение и запрет, ручная проверка);
+- перевод средств контрагенту;
+- компенсационные операции (возвраты).
+
+## По итогам задания у вас должно получиться:
+
+- Код сервиса.
+- Файл docker-compose.
+- Скриншоты из tasklist UI для процесса, который отработал.
+- Скриншот лога сервиса, где видно, что обработчики выполнялись.
