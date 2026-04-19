@@ -1,0 +1,329 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="Definitions_OrchestrPay" targetNamespace="http://orchestrpay.com/bpmn" exporter="Camunda Modeler" exporterVersion="5.45.0">
+  <bpmn:process id="Process_Payment" name="OrchestrPay Payment Process" isExecutable="true">
+    <bpmn:startEvent id="Start" name="Платёж инициирован">
+      <bpmn:outgoing>F_start_create</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Task_CreatePayment" name="Создать платёж">
+      <bpmn:incoming>F_start_create</bpmn:incoming>
+      <bpmn:outgoing>F_create_reserve</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_ReserveFunds" name="Списать средства">
+      <bpmn:incoming>F_create_reserve</bpmn:incoming>
+      <bpmn:outgoing>F_reserve_fraud</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_FraudCheck" name="Проверка на антифрод">
+      <bpmn:incoming>F_reserve_fraud</bpmn:incoming>
+      <bpmn:outgoing>F_fraud_gw</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_FraudDecision" name="Результат проверки">
+      <bpmn:incoming>F_fraud_gw</bpmn:incoming>
+      <bpmn:outgoing>F_fraud_ok</bpmn:outgoing>
+      <bpmn:outgoing>F_fraud_reject</bpmn:outgoing>
+      <bpmn:outgoing>F_fraud_manual</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:receiveTask id="Task_ManualReview" name="Ожидание ручного&#10;подтверждения">
+      <bpmn:incoming>F_fraud_manual</bpmn:incoming>
+      <bpmn:outgoing>F_manual_gw</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:boundaryEvent id="Boundary_CutOff" name="Cut-off 20 мин" attachedToRef="Task_ManualReview">
+      <bpmn:outgoing>F_cutoff_merge</bpmn:outgoing>
+      <bpmn:timerEventDefinition>
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT20M</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:exclusiveGateway id="GW_ManualDecision" name="Решение оператора">
+      <bpmn:incoming>F_manual_gw</bpmn:incoming>
+      <bpmn:outgoing>F_manual_ok</bpmn:outgoing>
+      <bpmn:outgoing>F_manual_reject</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:exclusiveGateway id="GW_ApprovedMerge">
+      <bpmn:incoming>F_fraud_ok</bpmn:incoming>
+      <bpmn:incoming>F_manual_ok</bpmn:incoming>
+      <bpmn:incoming>F_cutoff_merge</bpmn:incoming>
+      <bpmn:outgoing>F_merge_transfer</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Task_TransferMerchant" name="Перевод контрагенту">
+      <bpmn:incoming>F_merge_transfer</bpmn:incoming>
+      <bpmn:outgoing>F_transfer_pivot</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_Pivot" name="Ошибка после pivot">
+      <bpmn:incoming>F_transfer_pivot</bpmn:incoming>
+      <bpmn:outgoing>F_pivot_success</bpmn:outgoing>
+      <bpmn:outgoing>F_pivot_compensate</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sendTask id="Task_NotifySuccess" name="Уведомление&#10;об успешной оплате">
+      <bpmn:incoming>F_pivot_success</bpmn:incoming>
+      <bpmn:outgoing>F_notify_end_ok</bpmn:outgoing>
+    </bpmn:sendTask>
+    <bpmn:endEvent id="End_Success" name="Платёж завершён">
+      <bpmn:incoming>F_notify_end_ok</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="Task_ReverseMerchant" name="Отмена перевода&#10;контрагенту">
+      <bpmn:incoming>F_pivot_compensate</bpmn:incoming>
+      <bpmn:outgoing>F_reverse_refund</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_RefundAfterPivot" name="Возврат средств&#10;клиенту">
+      <bpmn:incoming>F_reverse_refund</bpmn:incoming>
+      <bpmn:outgoing>F_refund_notify_comp</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sendTask id="Task_NotifyRejectComp" name="Уведомление об отклонении платежа">
+      <bpmn:incoming>F_refund_notify_comp</bpmn:incoming>
+      <bpmn:outgoing>F_comp_end</bpmn:outgoing>
+    </bpmn:sendTask>
+    <bpmn:endEvent id="End_Compensated" name="Платеж отклонен (компенсация)">
+      <bpmn:incoming>F_comp_end</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:exclusiveGateway id="GW_RejectMerge">
+      <bpmn:incoming>F_fraud_reject</bpmn:incoming>
+      <bpmn:incoming>F_manual_reject</bpmn:incoming>
+      <bpmn:outgoing>F_reject_refund</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Task_RefundReject" name="Возврат средств&#10;клиенту">
+      <bpmn:incoming>F_reject_refund</bpmn:incoming>
+      <bpmn:outgoing>F_refund_notify_rej</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sendTask id="Task_NotifyReject" name="Уведомление об отклонении платежа">
+      <bpmn:incoming>F_refund_notify_rej</bpmn:incoming>
+      <bpmn:outgoing>F_notify_end_rej</bpmn:outgoing>
+    </bpmn:sendTask>
+    <bpmn:endEvent id="End_Reject" name="Платеж отклонен">
+      <bpmn:incoming>F_notify_end_rej</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="F_start_create" sourceRef="Start" targetRef="Task_CreatePayment" />
+    <bpmn:sequenceFlow id="F_create_reserve" sourceRef="Task_CreatePayment" targetRef="Task_ReserveFunds" />
+    <bpmn:sequenceFlow id="F_reserve_fraud" sourceRef="Task_ReserveFunds" targetRef="Task_FraudCheck" />
+    <bpmn:sequenceFlow id="F_fraud_gw" sourceRef="Task_FraudCheck" targetRef="GW_FraudDecision" />
+    <bpmn:sequenceFlow id="F_fraud_ok" name="Пройдена" sourceRef="GW_FraudDecision" targetRef="GW_ApprovedMerge" />
+    <bpmn:sequenceFlow id="F_fraud_reject" name="Не пройдена" sourceRef="GW_FraudDecision" targetRef="GW_RejectMerge" />
+    <bpmn:sequenceFlow id="F_fraud_manual" name="Требуется ручное&#10;подтверждение" sourceRef="GW_FraudDecision" targetRef="Task_ManualReview" />
+    <bpmn:sequenceFlow id="F_manual_gw" sourceRef="Task_ManualReview" targetRef="GW_ManualDecision" />
+    <bpmn:sequenceFlow id="F_cutoff_merge" name="Истечение срока&#10;подтверждения" sourceRef="Boundary_CutOff" targetRef="GW_ApprovedMerge" />
+    <bpmn:sequenceFlow id="F_manual_ok" name="Ручное подтверждение" sourceRef="GW_ManualDecision" targetRef="GW_ApprovedMerge" />
+    <bpmn:sequenceFlow id="F_manual_reject" name="Ручной отказ антифрод" sourceRef="GW_ManualDecision" targetRef="GW_RejectMerge" />
+    <bpmn:sequenceFlow id="F_merge_transfer" sourceRef="GW_ApprovedMerge" targetRef="Task_TransferMerchant" />
+    <bpmn:sequenceFlow id="F_transfer_pivot" sourceRef="Task_TransferMerchant" targetRef="GW_Pivot" />
+    <bpmn:sequenceFlow id="F_pivot_success" name="Успешно" sourceRef="GW_Pivot" targetRef="Task_NotifySuccess" />
+    <bpmn:sequenceFlow id="F_pivot_compensate" sourceRef="GW_Pivot" targetRef="Task_ReverseMerchant" />
+    <bpmn:sequenceFlow id="F_notify_end_ok" sourceRef="Task_NotifySuccess" targetRef="End_Success" />
+    <bpmn:sequenceFlow id="F_reverse_refund" sourceRef="Task_ReverseMerchant" targetRef="Task_RefundAfterPivot" />
+    <bpmn:sequenceFlow id="F_refund_notify_comp" sourceRef="Task_RefundAfterPivot" targetRef="Task_NotifyRejectComp" />
+    <bpmn:sequenceFlow id="F_comp_end" sourceRef="Task_NotifyRejectComp" targetRef="End_Compensated" />
+    <bpmn:sequenceFlow id="F_reject_refund" sourceRef="GW_RejectMerge" targetRef="Task_RefundReject" />
+    <bpmn:sequenceFlow id="F_refund_notify_rej" sourceRef="Task_RefundReject" targetRef="Task_NotifyReject" />
+    <bpmn:sequenceFlow id="F_notify_end_rej" sourceRef="Task_NotifyReject" targetRef="End_Reject" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_Payment">
+      <bpmndi:BPMNShape id="S_Start" bpmnElement="Start">
+        <dc:Bounds x="170" y="282" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="154" y="325" width="68" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_Create" bpmnElement="Task_CreatePayment">
+        <dc:Bounds x="250" y="260" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_Reserve" bpmnElement="Task_ReserveFunds">
+        <dc:Bounds x="410" y="260" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_Fraud" bpmnElement="Task_FraudCheck">
+        <dc:Bounds x="570" y="260" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_GW_Fraud" bpmnElement="GW_FraudDecision" isMarkerVisible="true">
+        <dc:Bounds x="745" y="275" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="784" y="325" width="51" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_Manual" bpmnElement="Task_ManualReview">
+        <dc:Bounds x="840" y="100" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_GW_Manual" bpmnElement="GW_ManualDecision" isMarkerVisible="true">
+        <dc:Bounds x="1040" y="115" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1038" y="90" width="55" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_GW_Merge" bpmnElement="GW_ApprovedMerge" isMarkerVisible="true">
+        <dc:Bounds x="1145" y="275" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_Transfer" bpmnElement="Task_TransferMerchant">
+        <dc:Bounds x="1240" y="260" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_GW_Pivot" bpmnElement="GW_Pivot" isMarkerVisible="true">
+        <dc:Bounds x="1425" y="275" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1452" y="346" width="75" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_NotifySuccess" bpmnElement="Task_NotifySuccess">
+        <dc:Bounds x="1520" y="180" width="140" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_EndOK" bpmnElement="End_Success">
+        <dc:Bounds x="1702" y="197" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1695" y="240" width="51" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_Reverse" bpmnElement="Task_ReverseMerchant">
+        <dc:Bounds x="1520" y="370" width="140" height="70" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_RefundComp" bpmnElement="Task_RefundAfterPivot">
+        <dc:Bounds x="1700" y="370" width="130" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_NotifyComp" bpmnElement="Task_NotifyRejectComp">
+        <dc:Bounds x="1870" y="370" width="130" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_EndComp" bpmnElement="End_Compensated">
+        <dc:Bounds x="2042" y="387" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="2016" y="430" width="89" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_GW_RejectMerge" bpmnElement="GW_RejectMerge" isMarkerVisible="true">
+        <dc:Bounds x="945" y="505" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_RefundRej" bpmnElement="Task_RefundReject">
+        <dc:Bounds x="1040" y="495" width="130" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_NotifyRej" bpmnElement="Task_NotifyReject">
+        <dc:Bounds x="1210" y="495" width="130" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_EndReject" bpmnElement="End_Reject">
+        <dc:Bounds x="1382" y="512" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1356" y="555" width="89" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="S_Boundary" bpmnElement="Boundary_CutOff">
+        <dc:Bounds x="974" y="164" width="32" height="32" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="914" y="203" width="71" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="E_start_create" bpmnElement="F_start_create">
+        <di:waypoint x="206" y="300" />
+        <di:waypoint x="250" y="300" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_create_reserve" bpmnElement="F_create_reserve">
+        <di:waypoint x="370" y="300" />
+        <di:waypoint x="410" y="300" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_reserve_fraud" bpmnElement="F_reserve_fraud">
+        <di:waypoint x="530" y="300" />
+        <di:waypoint x="570" y="300" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_fraud_gw" bpmnElement="F_fraud_gw">
+        <di:waypoint x="700" y="300" />
+        <di:waypoint x="745" y="300" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_fraud_ok" bpmnElement="F_fraud_ok">
+        <di:waypoint x="795" y="300" />
+        <di:waypoint x="1145" y="300" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="949" y="282" width="52" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_fraud_reject" bpmnElement="F_fraud_reject">
+        <di:waypoint x="770" y="325" />
+        <di:waypoint x="770" y="530" />
+        <di:waypoint x="945" y="530" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="786" y="503" width="67" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_fraud_manual" bpmnElement="F_fraud_manual">
+        <di:waypoint x="770" y="275" />
+        <di:waypoint x="770" y="140" />
+        <di:waypoint x="840" y="140" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="779" y="234" width="81" height="40" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_manual_gw" bpmnElement="F_manual_gw">
+        <di:waypoint x="990" y="140" />
+        <di:waypoint x="1040" y="140" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_cutoff" bpmnElement="F_cutoff_merge">
+        <di:waypoint x="990" y="196" />
+        <di:waypoint x="990" y="250" />
+        <di:waypoint x="1170" y="250" />
+        <di:waypoint x="1170" y="275" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1076" y="216" width="87" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_manual_ok" bpmnElement="F_manual_ok">
+        <di:waypoint x="1090" y="140" />
+        <di:waypoint x="1170" y="140" />
+        <di:waypoint x="1170" y="275" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1085" y="146" width="81" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_manual_reject" bpmnElement="F_manual_reject">
+        <di:waypoint x="1065" y="165" />
+        <di:waypoint x="1065" y="340" />
+        <di:waypoint x="970" y="340" />
+        <di:waypoint x="970" y="505" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="984" y="355" width="68" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_merge_transfer" bpmnElement="F_merge_transfer">
+        <di:waypoint x="1195" y="300" />
+        <di:waypoint x="1240" y="300" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_transfer_pivot" bpmnElement="F_transfer_pivot">
+        <di:waypoint x="1380" y="300" />
+        <di:waypoint x="1425" y="300" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_pivot_success" bpmnElement="F_pivot_success">
+        <di:waypoint x="1450" y="275" />
+        <di:waypoint x="1450" y="215" />
+        <di:waypoint x="1520" y="215" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1457" y="233" width="45" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_pivot_compensate" bpmnElement="F_pivot_compensate">
+        <di:waypoint x="1450" y="325" />
+        <di:waypoint x="1450" y="405" />
+        <di:waypoint x="1520" y="405" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1469" y="332" width="42" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_notify_end_ok" bpmnElement="F_notify_end_ok">
+        <di:waypoint x="1660" y="215" />
+        <di:waypoint x="1702" y="215" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_reverse_refund" bpmnElement="F_reverse_refund">
+        <di:waypoint x="1660" y="405" />
+        <di:waypoint x="1700" y="405" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_refund_notify_comp" bpmnElement="F_refund_notify_comp">
+        <di:waypoint x="1830" y="405" />
+        <di:waypoint x="1870" y="405" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_comp_end" bpmnElement="F_comp_end">
+        <di:waypoint x="2000" y="405" />
+        <di:waypoint x="2042" y="405" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_reject_refund" bpmnElement="F_reject_refund">
+        <di:waypoint x="995" y="530" />
+        <di:waypoint x="1040" y="530" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_refund_notify_rej" bpmnElement="F_refund_notify_rej">
+        <di:waypoint x="1170" y="530" />
+        <di:waypoint x="1210" y="530" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="E_notify_end_rej" bpmnElement="F_notify_end_rej">
+        <di:waypoint x="1340" y="530" />
+        <di:waypoint x="1382" y="530" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
